@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dither Boy — local</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0b0d'/><g fill='%2300e08a'><rect x='1' y='1' width='2' height='2'/><rect x='5' y='1' width='2' height='2'/><rect x='9' y='1' width='2' height='2'/><rect x='13' y='1' width='2' height='2'/><rect x='3' y='3' width='2' height='2'/><rect x='7' y='3' width='2' height='2'/><rect x='11' y='3' width='2' height='2'/><rect x='1' y='5' width='2' height='2'/><rect x='9' y='5' width='2' height='2'/><rect x='5' y='7' width='2' height='2'/><rect x='13' y='7' width='2' height='2'/></g></svg>" />
+</head>
+<body>
+  <div class="app">
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="sidebar">
+      <header class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div>
+          <h1>Dither&nbsp;Boy</h1>
+          <span class="tag">local edition</span>
+        </div>
+      </header>
+
+      <!-- IMAGE -->
+      <section class="panel">
+        <h2>Image</h2>
+        <div id="dropZone" class="drop">
+          <input type="file" id="fileInput" accept="image/*" hidden />
+          <p><strong>Drop an image</strong></p>
+          <p class="muted">or click to browse · or paste from clipboard</p>
+        </div>
+        <div class="row">
+          <button id="resetBtn" class="btn ghost" title="Reset all controls">Reset</button>
+          <button id="randomBtn" class="btn ghost" title="Randomize settings">Randomize</button>
+        </div>
+        <label class="check">
+          <input type="checkbox" id="showOriginal" /> Show original
+        </label>
+      </section>
+
+      <!-- PIXELATION -->
+      <section class="panel">
+        <h2>Pixelation</h2>
+        <div class="control">
+          <label for="resolution">Resolution <output id="resolutionOut"></output></label>
+          <input type="range" id="resolution" min="32" max="1400" step="2" value="500" />
+          <p class="hint">Lower = chunkier pixels &amp; faster.</p>
+        </div>
+      </section>
+
+      <!-- ADJUSTMENTS -->
+      <section class="panel">
+        <h2>Adjustments</h2>
+        <div class="control">
+          <label for="brightness">Brightness <output id="brightnessOut"></output></label>
+          <input type="range" id="brightness" min="-100" max="100" step="1" value="0" />
+        </div>
+        <div class="control">
+          <label for="contrast">Contrast <output id="contrastOut"></output></label>
+          <input type="range" id="contrast" min="-100" max="100" step="1" value="0" />
+        </div>
+        <div class="control">
+          <label for="midtones">Midtones <output id="midtonesOut"></output></label>
+          <input type="range" id="midtones" min="-100" max="100" step="1" value="0" />
+        </div>
+        <div class="control">
+          <label for="saturation">Saturation <output id="saturationOut"></output></label>
+          <input type="range" id="saturation" min="-100" max="100" step="1" value="0" />
+        </div>
+        <div class="control">
+          <label for="hue">Hue shift <output id="hueOut"></output></label>
+          <input type="range" id="hue" min="-180" max="180" step="1" value="0" />
+        </div>
+        <label class="check"><input type="checkbox" id="invert" /> Invert</label>
+      </section>
+
+      <!-- DITHER -->
+      <section class="panel">
+        <h2>Dither</h2>
+        <div class="control">
+          <label for="algorithm">Algorithm</label>
+          <select id="algorithm"></select>
+        </div>
+        <div class="control" id="amountWrap">
+          <label for="amount">Dither amount <output id="amountOut"></output></label>
+          <input type="range" id="amount" min="0" max="150" step="1" value="100" />
+        </div>
+        <div class="control" id="halftoneWrap" hidden>
+          <label for="halftoneSize">Dot size <output id="halftoneSizeOut"></output></label>
+          <input type="range" id="halftoneSize" min="2" max="24" step="1" value="6" />
+        </div>
+        <label class="check" id="serpentineWrap">
+          <input type="checkbox" id="serpentine" checked /> Serpentine scan
+        </label>
+      </section>
+
+      <!-- COLOR -->
+      <section class="panel">
+        <h2>Color</h2>
+        <div class="control">
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="bw">Black &amp; White (1-bit)</option>
+            <option value="grayscale">Grayscale / Duotone</option>
+            <option value="color">Color palette</option>
+          </select>
+        </div>
+
+        <div class="control" id="levelsWrap">
+          <label for="levels">Levels <output id="levelsOut"></output></label>
+          <input type="range" id="levels" min="2" max="32" step="1" value="2" />
+        </div>
+
+        <div class="row" id="duoWrap">
+          <label class="swatch">
+            <span>Ink</span>
+            <input type="color" id="inkColor" value="#0b0b0d" />
+          </label>
+          <label class="swatch">
+            <span>Paper</span>
+            <input type="color" id="paperColor" value="#f2f2f2" />
+          </label>
+        </div>
+
+        <div id="colorWrap" hidden>
+          <div class="control">
+            <label for="palette">Preset palette</label>
+            <select id="palette"></select>
+          </div>
+          <div id="customWrap" hidden>
+            <div id="customPalette" class="palette-grid"></div>
+            <div class="row">
+              <input type="color" id="newColor" value="#ff3366" />
+              <button id="addColor" class="btn ghost small">Add color</button>
+            </div>
+          </div>
+          <div class="control">
+            <label for="extractCount">Extract from image <output id="extractCountOut"></output></label>
+            <input type="range" id="extractCount" min="2" max="32" step="1" value="8" />
+            <button id="extractBtn" class="btn small">Extract palette</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- EFFECTS -->
+      <section class="panel">
+        <h2>Post effects</h2>
+        <div class="control">
+          <label for="scanlines">Scanlines <output id="scanlinesOut"></output></label>
+          <input type="range" id="scanlines" min="0" max="100" step="1" value="0" />
+        </div>
+        <div class="control">
+          <label for="noise">Noise <output id="noiseOut"></output></label>
+          <input type="range" id="noise" min="0" max="100" step="1" value="0" />
+        </div>
+        <div class="control">
+          <label for="chroma">Chromatic aberration <output id="chromaOut"></output></label>
+          <input type="range" id="chroma" min="0" max="12" step="1" value="0" />
+        </div>
+      </section>
+
+      <!-- ANIMATION / GIF -->
+      <section class="panel">
+        <h2>Animation / GIF</h2>
+        <p id="gifInfo" class="hint">No image loaded.</p>
+        <div class="control" id="shimmerFramesWrap">
+          <label for="animFrames">Frames (still → GIF) <output id="animFramesOut"></output></label>
+          <input type="range" id="animFrames" min="2" max="60" step="1" value="12" />
+        </div>
+        <div class="control">
+          <label for="animFps">Speed <output id="animFpsOut"></output> fps</label>
+          <input type="range" id="animFps" min="2" max="30" step="1" value="12" />
+        </div>
+        <button id="exportGifBtn" class="btn primary" disabled>Export animated GIF</button>
+        <p id="gifProgress" class="hint"></p>
+      </section>
+
+      <!-- BATCH -->
+      <section class="panel">
+        <h2>Batch</h2>
+        <p class="hint">Dither many images with the current settings, download as a ZIP.</p>
+        <input type="file" id="batchInput" accept="image/*" multiple hidden />
+        <button id="batchAddBtn" class="btn ghost">Add images…</button>
+        <ul id="batchList" class="batch-list"></ul>
+        <button id="batchRunBtn" class="btn primary" disabled>Process all → ZIP</button>
+        <p id="batchProgress" class="hint"></p>
+      </section>
+
+      <!-- EXPORT -->
+      <section class="panel">
+        <h2>Export</h2>
+        <div class="control">
+          <label for="exportScale">Output scale</label>
+          <select id="exportScale">
+            <option value="1">1× (native pixels)</option>
+            <option value="2" selected>2×</option>
+            <option value="4">4×</option>
+            <option value="8">8×</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="downloadBtn" class="btn primary" disabled>Download PNG</button>
+          <button id="copyBtn" class="btn ghost" disabled>Copy</button>
+        </div>
+      </section>
+
+      <footer class="credit">
+        <p>A local, in-browser homage to
+          <a href="https://studioaaa.com/product/dither-boy/" target="_blank" rel="noopener">Studio AAA's Dither Boy</a>.
+          Images never leave your machine.</p>
+      </footer>
+    </aside>
+
+    <!-- ============ STAGE ============ -->
+    <main class="stage">
+      <div id="empty" class="empty">
+        <div class="empty-art" aria-hidden="true"></div>
+        <h2>Drop an image to begin</h2>
+        <p class="muted">Drag &amp; drop, click <em>Image → Drop an image</em>, or paste (Ctrl/Cmd&nbsp;+&nbsp;V).</p>
+      </div>
+      <div id="viewport" class="viewport" hidden>
+        <canvas id="canvas"></canvas>
+      </div>
+      <div id="status" class="status" hidden></div>
+    </main>
+  </div>
+
+  <script src="dither.js"></script>
+  <script src="codec.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
