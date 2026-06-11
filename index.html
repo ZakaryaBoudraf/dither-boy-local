@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dither Boy — local</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=3" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0b0d'/><g fill='%2300e08a'><rect x='1' y='1' width='2' height='2'/><rect x='5' y='1' width='2' height='2'/><rect x='9' y='1' width='2' height='2'/><rect x='13' y='1' width='2' height='2'/><rect x='3' y='3' width='2' height='2'/><rect x='7' y='3' width='2' height='2'/><rect x='11' y='3' width='2' height='2'/><rect x='1' y='5' width='2' height='2'/><rect x='9' y='5' width='2' height='2'/><rect x='5' y='7' width='2' height='2'/><rect x='13' y='7' width='2' height='2'/></g></svg>" />
 </head>
 <body>
@@ -183,10 +183,24 @@
         <div class="control">
           <input type="range" id="videoSeek" min="0" max="1000" step="1" value="0" />
         </div>
-        <button id="exportVideoBtn" class="btn primary">Export dithered video (WebM)</button>
-        <p class="hint">Records the live preview in real time — takes as long as the clip plays.
-        Slider changes during recording are captured too. The GIF panel above can also
-        sample this video into an animated GIF.</p>
+        <div class="control">
+          <label for="videoFormat">Export format</label>
+          <select id="videoFormat">
+            <option value="mp4">MP4 (H.264)</option>
+            <option value="webm">WebM (with audio)</option>
+          </select>
+        </div>
+        <div class="control" id="mp4FpsWrap">
+          <label for="mp4Fps">MP4 frame rate</label>
+          <select id="mp4Fps">
+            <option value="12">12 fps</option>
+            <option value="15">15 fps</option>
+            <option value="24" selected>24 fps</option>
+            <option value="30">30 fps</option>
+          </select>
+        </div>
+        <button id="exportVideoBtn" class="btn primary">Export dithered video</button>
+        <p id="videoHint" class="hint"></p>
         <p id="videoProgress" class="hint"></p>
       </section>
 
@@ -241,8 +255,8 @@
     </main>
   </div>
 
-  <script src="dither.js"></script>
-  <script src="codec.js"></script>
-  <script src="app.js"></script>
+  <script src="dither.js?v=3"></script>
+  <script src="codec.js?v=3"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

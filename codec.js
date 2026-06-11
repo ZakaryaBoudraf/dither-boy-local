@@ -361,6 +361,88 @@
     return { width, height, frames };
   }
 
+  /* ====================== MP4 mux (H.264, video-only) ================== */
+  // Wraps WebCodecs-encoded H.264 (AVC format) samples in an ISO BMFF container.
+  // opts: { width, height, fps, samples:[{data:Uint8Array,isKey:bool}], avcC:Uint8Array }
+  function muxMP4(opts) {
+    const { width, height, fps, samples, avcC } = opts;
+    const enc = new TextEncoder();
+    const cat = (arrs) => {
+      let n = 0;
+      for (const a of arrs) n += a.length;
+      const o = new Uint8Array(n);
+      let p = 0;
+      for (const a of arrs) { o.set(a, p); p += a.length; }
+      return o;
+    };
+    const U32 = (v) => Uint8Array.from([v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255]);
+    const U16 = (v) => Uint8Array.from([v >>> 8 & 255, v & 255]);
+    const STR = (s) => enc.encode(s);
+    const box = (type, ...parts) => {
+      const body = cat(parts.map((p) => (p instanceof Uint8Array ? p : Uint8Array.from(p))));
+      return cat([U32(body.length + 8), STR(type), body]);
+    };
+    const full = (type, version, flags, ...parts) =>
+      box(type, Uint8Array.from([version, flags >>> 16 & 255, flags >>> 8 & 255, flags & 255]), ...parts);
+
+    const TS = 90000;                          // track timescale
+    const delta = Math.round(TS / fps);
+    const n = samples.length;
+    const durMs = Math.round((n * 1000) / fps);
+    const MATRIX = cat([U32(0x10000), U32(0), U32(0), U32(0), U32(0x10000), U32(0),
+                        U32(0), U32(0), U32(0x40000000)]);
+
+    const ftyp = box('ftyp', STR('isom'), U32(512), STR('isomiso2avc1mp41'));
+    const mediaData = cat(samples.map((s) => s.data));
+    const mdat = cat([U32(mediaData.length + 8), STR('mdat'), mediaData]);
+    const dataOffset = ftyp.length + 8;        // first sample byte in the file
+
+    let keyIdx = [];
+    samples.forEach((s, i) => { if (s.isKey) keyIdx.push(i + 1); });
+    if (!keyIdx.length) keyIdx = [1];
+
+    const avc1 = box('avc1',
+      new Uint8Array(6), U16(1),               // reserved + data_reference_index
+      new Uint8Array(16),                      // pre_defined / reserved
+      U16(width), U16(height),
+      U32(0x00480000), U32(0x00480000),        // 72 dpi
+      U32(0), U16(1),                          // reserved + frame_count
+      new Uint8Array(32),                      // compressorname
+      U16(0x0018), U16(0xFFFF),                // depth + pre_defined(-1)
+      box('avcC', avcC));
+
+    const stbl = box('stbl',
+      full('stsd', 0, 0, U32(1), avc1),
+      full('stts', 0, 0, U32(1), U32(n), U32(delta)),
+      full('stss', 0, 0, U32(keyIdx.length), cat(keyIdx.map(U32))),
+      full('stsc', 0, 0, U32(1), U32(1), U32(n), U32(1)),
+      full('stsz', 0, 0, U32(0), U32(n), cat(samples.map((s) => U32(s.data.length)))),
+      full('stco', 0, 0, U32(1), U32(dataOffset)));
+
+    const minf = box('minf',
+      full('vmhd', 0, 1, U16(0), U16(0), U16(0), U16(0)),
+      box('dinf', full('dref', 0, 0, U32(1), full('url ', 0, 1))),
+      stbl);
+
+    const mdia = box('mdia',
+      full('mdhd', 0, 0, U32(0), U32(0), U32(TS), U32(n * delta), U16(0x55C4), U16(0)),
+      full('hdlr', 0, 0, U32(0), STR('vide'), U32(0), U32(0), U32(0), STR('VideoHandler'), new Uint8Array(1)),
+      minf);
+
+    const tkhd = full('tkhd', 0, 3,
+      U32(0), U32(0), U32(1), U32(0), U32(durMs),
+      U32(0), U32(0), U16(0), U16(0), U16(0), U16(0), MATRIX,
+      U32(width << 16), U32(height << 16));
+
+    const mvhd = full('mvhd', 0, 0,
+      U32(0), U32(0), U32(1000), U32(durMs), U32(0x10000), U16(0x0100), U16(0),
+      U32(0), U32(0), MATRIX,
+      U32(0), U32(0), U32(0), U32(0), U32(0), U32(0), U32(2));
+
+    const moov = box('moov', mvhd, box('trak', tkhd, mdia));
+    return new Blob([ftyp, mdat, moov], { type: 'video/mp4' });
+  }
+
   /* ====================== exports ===================================== */
-  global.Codec = { crc32, zipStore, encodeGIF, decodeGIF, _lzwEncode: lzwEncode, _lzwDecode: lzwDecode };
+  global.Codec = { crc32, zipStore, encodeGIF, decodeGIF, muxMP4, _lzwEncode: lzwEncode, _lzwDecode: lzwDecode };
 })(window);

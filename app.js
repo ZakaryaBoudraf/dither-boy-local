@@ -19,6 +19,9 @@
     const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
     return m + ':' + String(s).padStart(2, '0');
   };
+  const fmtSize = (bytes) => bytes >= 1024 * 1024
+    ? (bytes / 1024 / 1024).toFixed(1) + ' MB'
+    : Math.max(1, Math.round(bytes / 1024)) + ' KB';
 
   const MAX_GIF_FRAMES = 200; // cap for video → GIF sampling
 
@@ -332,8 +335,116 @@
     $('videoTime').textContent = fmtTime(v.currentTime) + ' / ' + fmtTime(v.duration);
   }
 
-  /* ---------- video export (WebM via MediaRecorder) ---------------------- */
-  async function exportVideo() {
+  // seek and report whether the media actually landed near t — false means
+  // the file's metadata claims more duration than it can seek to (bail out)
+  async function seekVideo(v, t) {
+    if (Math.abs(v.currentTime - t) <= 1e-4) return true;
+    v.currentTime = t;
+    await once(v, 'seeked', 3000);
+    return Math.abs(v.currentTime - t) <= 0.5;
+  }
+
+  /* ---------- video export ----------------------------------------------- */
+  function exportVideo() {
+    return $('videoFormat').value === 'mp4' ? exportMp4() : exportWebm();
+  }
+
+  /* MP4: frame-accurate H.264 encode via WebCodecs + own ISO-BMFF muxer */
+  async function exportMp4() {
+    const v = state.video;
+    if (!v || state.exporting) return;
+    const btn = $('exportVideoBtn'), prog = $('videoProgress');
+    if (!('VideoEncoder' in window)) {
+      prog.textContent = 'MP4 needs WebCodecs (Chrome, Edge, Safari 16.4+, Firefox 130+). Use WebM instead.';
+      return;
+    }
+    const s = readSettings();
+    const sw = v.videoWidth, sh = v.videoHeight;
+    const [ww, wh] = workingDims(sw, sh, s);
+    const W2 = Math.max(2, ww & ~1), H2 = Math.max(2, wh & ~1); // H.264 wants even dims
+    const fps = +$('mp4Fps').value;
+    const px = W2 * H2;
+    // constrained-baseline ladder, level picked by frame size
+    const ladder = px <= 414720 ? ['avc1.42E01E', 'avc1.42E01F', 'avc1.42E028']
+      : px <= 921600 ? ['avc1.42E01F', 'avc1.42E028', 'avc1.42E032']
+      : px <= 2097152 ? ['avc1.42E028', 'avc1.42E032']
+      : ['avc1.42E032', 'avc1.42E033'];
+    // dithered frames are noise-like — give the codec generous bitrate
+    const bitrate = Math.min(16e6, Math.max(2e6, Math.round(px * fps * 0.3)));
+    let config = null;
+    for (const codec of ladder) {
+      const c = { codec, width: W2, height: H2, bitrate, framerate: fps, avc: { format: 'avc' } };
+      try {
+        const r = await VideoEncoder.isConfigSupported(c);
+        if (r.supported) { config = c; break; }
+      } catch (err) { /* try next level */ }
+    }
+    if (!config) { prog.textContent = 'No supported H.264 encoder here — use WebM instead.'; return; }
+
+    btn.disabled = true;
+    $('exportGifBtn').disabled = true;
+    const resume = !v.paused;
+    v.pause();
+    state.exporting = true;
+
+    const samples = [];
+    let avcC = null, encError = null;
+    const enc = new VideoEncoder({
+      output: (chunk, meta) => {
+        if (!avcC && meta && meta.decoderConfig && meta.decoderConfig.description) {
+          avcC = new Uint8Array(meta.decoderConfig.description);
+        }
+        const data = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(data);
+        samples.push({ data, isKey: chunk.type === 'key' });
+      },
+      error: (e) => { encError = e; },
+    });
+    const tmp = document.createElement('canvas');
+    tmp.width = W2; tmp.height = H2;
+    const tctx = tmp.getContext('2d');
+
+    try {
+      enc.configure(config);
+      const total = Math.max(1, Math.floor(v.duration * fps));
+      for (let i = 0; i < total; i++) {
+        if (encError) throw encError;
+        const t = i / fps;
+        if (t >= v.duration) break;
+        if (!(await seekVideo(v, t))) break;
+        const r = ditherSource(v, sw, sh, s);
+        tctx.putImageData(r.out, 0, 0);              // clips odd row/col if any
+        const frame = new VideoFrame(tmp, {
+          timestamp: Math.round((i * 1e6) / fps),
+          duration: Math.round(1e6 / fps),
+        });
+        enc.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+        frame.close();
+        while (enc.encodeQueueSize > 4) await tick();
+        prog.textContent = `Encoding frame ${i + 1}/${total}…`;
+        if (i % 5 === 0) await tick();
+      }
+      prog.textContent = 'Finalizing…';
+      await enc.flush();
+      if (encError) throw encError;
+      if (!avcC || !samples.length) throw new Error('encoder produced no output');
+      const blob = Codec.muxMP4({ width: W2, height: H2, fps, samples, avcC });
+      downloadBlob(blob, `dither-${Date.now()}.mp4`);
+      prog.textContent = `Done — ${fmtSize(blob.size)} MP4 · ${samples.length} frames (silent)`;
+    } catch (err) {
+      console.error(err);
+      prog.textContent = 'MP4 export failed: ' + err.message;
+    } finally {
+      try { enc.close(); } catch (err) { /* already closed */ }
+      state.exporting = false;
+      if (resume) v.play().catch(() => {});
+      btn.disabled = false;
+      $('exportGifBtn').disabled = false;
+    }
+  }
+
+  /* WebM: real-time MediaRecorder capture of the live preview (with audio) */
+  async function exportWebm() {
     const v = state.video;
     if (!v || state.exporting) return;
     const btn = $('exportVideoBtn'), prog = $('videoProgress');
@@ -383,7 +494,7 @@
     const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
     const blob = new Blob(chunks, { type: mime.split(';')[0] });
     downloadBlob(blob, `dither-${Date.now()}.${ext}`);
-    prog.textContent = `Done — ${(blob.size / 1024 / 1024).toFixed(1)} MB ${ext.toUpperCase()}`;
+    prog.textContent = `Done — ${fmtSize(blob.size)} ${ext.toUpperCase()}`;
     btn.disabled = false;
     $('exportGifBtn').disabled = false;
   }
@@ -447,10 +558,7 @@
         for (let i = 0; i < total; i++) {
           const t = i / fps;
           if (t >= v.duration) break;
-          if (Math.abs(v.currentTime - t) > 1e-4) {
-            v.currentTime = t;
-            await once(v, 'seeked', 3000);
-          }
+          if (!(await seekVideo(v, t))) break;
           const r = ditherSource(v, v.videoWidth, v.videoHeight, s);
           W = r.w; H = r.h;
           frames.push({ data: r.out.data, delayCs: delay });
@@ -532,6 +640,7 @@
 
   /* ---------- small helpers --------------------------------------------- */
   function downloadBlob(blob, name) {
+    window.__lastExport = { blob, name, at: Date.now() }; // debug/testing hook
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = name; a.click();
@@ -593,6 +702,12 @@
     $('customWrap').hidden = !(s.mode === 'color' && s.palette === 'custom');
     $('shimmerFramesWrap').hidden = !!state.gif || !!state.video;
     $('videoPanel').hidden = !state.video;
+    $('mp4FpsWrap').hidden = $('videoFormat').value !== 'mp4';
+    $('videoHint').textContent = $('videoFormat').value === 'mp4'
+      ? 'Frame-accurate H.264 encode via WebCodecs — plays everywhere, but silent (no audio). ' +
+        'Use WebM to keep the soundtrack.'
+      : 'Records the live preview in real time (takes as long as the clip), original audio included ' +
+        'where the browser supports it. Slider changes during recording are captured too.';
 
     const labels = $('duoWrap').querySelectorAll('.swatch span');
     if (s.mode === 'grayscale') { labels[0].textContent = 'Dark tint'; labels[1].textContent = 'Light tint'; }
@@ -672,6 +787,12 @@
 
   /* ---------- wiring ----------------------------------------------------- */
   function init() {
+    if (!('VideoEncoder' in window)) {
+      const opt = $('videoFormat').querySelector('option[value="mp4"]');
+      opt.disabled = true;
+      opt.textContent += ' — unsupported in this browser';
+      $('videoFormat').value = 'webm';
+    }
     buildAlgorithmSelect();
     buildPaletteSelect();
     renderCustomPalette();

@@ -59,10 +59,14 @@ implemented from scratch (no libraries).
 
 **Video** — load a video clip and the live preview dithers it in real time while
 it plays, with play/pause and a seek bar. Export options:
-- **Dithered video (WebM)** — records the live preview via `MediaRecorder` in
-  real time (the export takes as long as the clip), original audio included
-  where the browser supports capturing it. Tweaking sliders *during* the
-  recording is captured too — you can perform the export live.
+- **MP4 (H.264)** — frame-accurate encode through the WebCodecs `VideoEncoder`,
+  wrapped in an MP4 container by a from-scratch ISO-BMFF muxer. Selectable
+  frame rate (12/15/24/30 fps). Silent (no audio track) — ready for Instagram
+  & co. Needs a WebCodecs browser (Chrome, Edge, Safari 16.4+, Firefox 130+).
+- **WebM** — records the live preview via `MediaRecorder` in real time (the
+  export takes as long as the clip), original audio included where the browser
+  supports capturing it. Tweaking sliders *during* the recording is captured
+  too — you can perform the export live.
 - **Animated GIF** — samples the video timeline at your chosen fps (up to 200
   frames) and re-dithers every sampled frame.
 
@@ -77,7 +81,7 @@ scratch, no libraries).
 | `index.html` | layout & controls |
 | `style.css`  | styling |
 | `dither.js`  | the processing engine (algorithms, palettes, effects) |
-| `codec.js`   | animated GIF encoder/decoder + ZIP writer (all from scratch) |
+| `codec.js`   | animated GIF encoder/decoder, ZIP writer, MP4 muxer (all from scratch) |
 | `app.js`     | UI wiring & render pipeline |
 
 ## Notes & differences from the original
@@ -85,7 +89,7 @@ scratch, no libraries).
 This is a homage, not a clone. The commercial Dither Boy additionally offers a
 timeline editor with keyframes, a much larger effect library (~63), stackable
 reorderable effect layers, and vector/embroidery export — those are out of scope
-here. Video in/out is supported (live dithered playback, WebM and GIF export),
-but export rides on the browser's `MediaRecorder`, so WebM is the output format
-rather than MP4 on most browsers. Everything above is implemented from scratch
-in vanilla JS on the Canvas API.
+here. Video in/out is supported: live dithered playback plus MP4, WebM and GIF
+export. MP4 comes out silent (browsers don't expose an AAC encoder reliably);
+pick WebM when you need the soundtrack. Everything above is implemented from
+scratch in vanilla JS on the Canvas API.
