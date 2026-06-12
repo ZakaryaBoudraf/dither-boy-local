@@ -298,6 +298,11 @@
   /* ---------- media loading ---------------------------------------------- */
   function loadImageFile(file) {
     if (!file) return;
+    // a dropped preset file applies the settings instead of loading media
+    if ((file.name && /\.json$/i.test(file.name)) || file.type === 'application/json') {
+      importPresetFile(file);
+      return;
+    }
     if (file.type.startsWith('video/')) { loadVideoFile(file); return; }
     if (!file.type.startsWith('image/')) return;
     if (file.type === 'image/gif' && file.arrayBuffer) {
@@ -870,6 +875,122 @@
     syncOutputs(); updateVisibility(); schedule();
   }
 
+  /* ---------- settings presets ------------------------------------------ */
+  const PRESET_LS_KEY = 'ditherer-presets';
+
+  function loadStoredPresets() {
+    try { return JSON.parse(localStorage.getItem(PRESET_LS_KEY)) || {}; }
+    catch (err) { return {}; }
+  }
+  function storePresets(map) {
+    try { localStorage.setItem(PRESET_LS_KEY, JSON.stringify(map)); }
+    catch (err) { presetMsg('Could not persist presets (storage unavailable).'); }
+  }
+  function presetMsg(text) { $('presetMsg').textContent = text; }
+
+  // full snapshot of every control, the custom palette and the crop transform
+  function capturePreset(name) {
+    return {
+      app: 'ditherer-preset',
+      version: 1,
+      name,
+      saved: new Date().toISOString(),
+      settings: readSettings(),
+      animFrames: +$('animFrames').value,
+      animFps: +$('animFps').value,
+      customColors: state.customColors.slice(),
+      transform: Object.assign({}, state.transform),
+      videoFormat: $('videoFormat').value,
+      mp4Fps: $('mp4Fps').value,
+    };
+  }
+
+  // apply with validation — unknown keys are ignored, bad values fall back,
+  // range inputs clamp out-of-range numbers to their min/max on their own
+  function applyPreset(p) {
+    if (!p || typeof p !== 'object' || typeof p.settings !== 'object' || p.settings === null) {
+      throw new Error('not a Ditherer preset file');
+    }
+    const s = p.settings;
+    const hexOk = (h) => typeof h === 'string' && /^#[0-9a-fA-F]{6}$/.test(h);
+    ['resolution', 'brightness', 'contrast', 'midtones', 'saturation', 'hue',
+     'amount', 'halftoneSize', 'levels', 'scanlines', 'noise', 'chroma'].forEach((id) => {
+      if (s[id] != null && isFinite(+s[id])) $(id).value = +s[id];
+    });
+    if (p.animFrames != null && isFinite(+p.animFrames)) $('animFrames').value = +p.animFrames;
+    if (p.animFps != null && isFinite(+p.animFps)) $('animFps').value = +p.animFps;
+    $('invert').checked = !!s.invert;
+    $('serpentine').checked = s.serpentine !== false;
+    if (Dither.ALGORITHMS[s.algorithm]) $('algorithm').value = s.algorithm;
+    if (['bw', 'grayscale', 'color'].indexOf(s.mode) >= 0) $('mode').value = s.mode;
+    if (s.palette === 'custom' || PALETTES[s.palette]) $('palette').value = s.palette;
+    if (hexOk(s.ink)) $('inkColor').value = s.ink;
+    if (hexOk(s.paper)) $('paperColor').value = s.paper;
+    if ([1, 2, 4, 8].indexOf(+s.exportScale) >= 0) $('exportScale').value = String(+s.exportScale);
+    if (Array.isArray(p.customColors)) {
+      const cc = p.customColors.filter(hexOk);
+      if (cc.length >= 2) state.customColors = cc;
+    }
+    if (p.transform && typeof p.transform === 'object') {
+      const t = p.transform;
+      const ratioOk = Array.prototype.some.call($('cropRatio').options, (o) => o.value === t.ratio);
+      state.transform = {
+        angle: Math.max(-45, Math.min(45, isFinite(+t.angle) ? +t.angle : 0)),
+        rot: ((Math.round(+t.rot || 0) % 4) + 4) % 4,
+        ratio: ratioOk ? t.ratio : 'free',
+        zoom: Math.max(1, Math.min(4, isFinite(+t.zoom) ? +t.zoom : 1)),
+        ox: Math.max(0, Math.min(1, isFinite(+t.ox) ? +t.ox : 0.5)),
+        oy: Math.max(0, Math.min(1, isFinite(+t.oy) ? +t.oy : 0.5)),
+      };
+      $('cropRatio').value = state.transform.ratio;
+      $('straighten').value = state.transform.angle;
+      $('cropZoom').value = state.transform.zoom;
+      canvas.style.cursor = state.transform.zoom > 1.001 ? 'grab' : '';
+    }
+    if (p.videoFormat === 'webm' || (p.videoFormat === 'mp4' && 'VideoEncoder' in window)) {
+      $('videoFormat').value = p.videoFormat;
+    }
+    if (p.mp4Fps && Array.prototype.some.call($('mp4Fps').options, (o) => o.value === String(p.mp4Fps))) {
+      $('mp4Fps').value = String(p.mp4Fps);
+    }
+    renderCustomPalette();
+    syncOutputs(); updateVisibility(); refreshGifInfo(); schedule();
+  }
+
+  function refreshPresetSelect(selectName) {
+    const sel = $('presetSelect');
+    const names = Object.keys(loadStoredPresets()).sort((a, b) => a.localeCompare(b));
+    sel.innerHTML = '<option value="">— saved presets —</option>';
+    for (const n of names) {
+      const o = document.createElement('option');
+      o.value = n; o.textContent = n;
+      sel.appendChild(o);
+    }
+    sel.value = selectName || '';
+  }
+
+  function importPresetFile(file) {
+    const r = new FileReader();
+    r.onload = (e) => {
+      try {
+        const p = JSON.parse(e.target.result);
+        const name = (typeof p.name === 'string' && p.name.trim()) ||
+          file.name.replace(/\.ditherer\.json$|\.json$/i, '') || 'Imported preset';
+        p.name = name;
+        applyPreset(p);
+        const map = loadStoredPresets();
+        map[name] = p;
+        storePresets(map);
+        refreshPresetSelect(name);
+        $('presetName').value = name;
+        presetMsg(`Imported & applied “${name}”.`);
+      } catch (err) {
+        presetMsg('Import failed: ' + err.message);
+      }
+    };
+    r.readAsText(file);
+  }
+
   /* ---------- wiring ----------------------------------------------------- */
   function init() {
     if (!('VideoEncoder' in window)) {
@@ -1026,6 +1147,57 @@
     $('batchAddBtn').addEventListener('click', () => $('batchInput').click());
     $('batchInput').addEventListener('change', (e) => { addBatchFiles(e.target.files); e.target.value = ''; });
     $('batchRunBtn').addEventListener('click', runBatch);
+
+    // presets
+    refreshPresetSelect();
+    const savePreset = () => {
+      let name = $('presetName').value.trim();
+      if (!name) name = 'Preset ' + new Date().toISOString().slice(0, 16).replace('T', ' ');
+      const map = loadStoredPresets();
+      const existed = !!map[name];
+      map[name] = capturePreset(name);
+      storePresets(map);
+      refreshPresetSelect(name);
+      presetMsg(existed ? `Updated “${name}”.` : `Saved “${name}”.`);
+    };
+    $('presetSaveBtn').addEventListener('click', savePreset);
+    $('presetName').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); savePreset(); }
+    });
+    $('presetSelect').addEventListener('change', () => {
+      const name = $('presetSelect').value;
+      if (!name) return;
+      const p = loadStoredPresets()[name];
+      if (!p) { presetMsg('Preset not found.'); return; }
+      try {
+        applyPreset(p);
+        $('presetName').value = name;
+        presetMsg(`Applied “${name}”.`);
+      } catch (err) { presetMsg('Could not apply: ' + err.message); }
+    });
+    $('presetDownloadBtn').addEventListener('click', () => {
+      const selected = $('presetSelect').value;
+      const name = selected || $('presetName').value.trim() || 'settings';
+      const p = (selected && loadStoredPresets()[selected]) || capturePreset(name);
+      const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+      const fname = name.toLowerCase().replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '') || 'preset';
+      downloadBlob(blob, fname + '.ditherer.json');
+      presetMsg(selected ? `Downloaded “${name}”.` : 'Downloaded current settings.');
+    });
+    $('presetImportBtn').addEventListener('click', () => $('presetFileInput').click());
+    $('presetFileInput').addEventListener('change', (e) => {
+      if (e.target.files[0]) importPresetFile(e.target.files[0]);
+      e.target.value = '';
+    });
+    $('presetDeleteBtn').addEventListener('click', () => {
+      const name = $('presetSelect').value;
+      if (!name) { presetMsg('Select a preset to delete.'); return; }
+      const map = loadStoredPresets();
+      delete map[name];
+      storePresets(map);
+      refreshPresetSelect();
+      presetMsg(`Deleted “${name}”.`);
+    });
 
     // misc
     $('resetBtn').addEventListener('click', () => { applyDefaults(); schedule(); });

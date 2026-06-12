@@ -131,11 +131,16 @@ input[type="range"]::-moz-range-thumb {
   background: var(--accent);
 }
 
-select, input[type="file"] {
+select, input[type="file"], input[type="text"] {
   width: 100%; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 10px; font-size: 13px;
+  font-family: inherit;
 }
-select:focus { border-color: var(--accent-dim); outline: none; }
+select:focus, input[type="text"]:focus { border-color: var(--accent-dim); outline: none; }
+input[type="text"]::placeholder { color: var(--muted); }
+.row > input[type="text"] { flex: 1; min-width: 0; }
+.row > input[type="text"] + .btn { flex: 0 0 auto; }
+.hint-inline { color: var(--muted); font-weight: 400; font-size: 11px; }
 
 /* buttons */
 .btn {

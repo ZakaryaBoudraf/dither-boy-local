@@ -31,6 +31,13 @@ and zoom-to-reframe: zoom past 1× and drag the preview to position the crop.
 A rule-of-thirds grid appears while you adjust. Applies to stills, GIFs and
 video alike — all exports included.
 
+**Settings presets** — save the entire control state (dither, color, custom
+palette, adjustments, crop/straighten, animation and export options) under a
+name and reapply it to any image later; saved presets persist in the browser.
+Presets also download as small `.ditherer.json` files you can share or back
+up — import one with the Import button, or just drop the file anywhere on the
+app and every setting snaps into place.
+
 **18 dithering algorithms**
 - *Error diffusion:* Floyd–Steinberg, False Floyd–Steinberg, Jarvis–Judice–Ninke,
   Stucki, Atkinson, Burkes, Sierra (3-row), Two-Row Sierra, Sierra Lite, Stevenson–Arce
