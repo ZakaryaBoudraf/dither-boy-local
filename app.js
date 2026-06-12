@@ -78,6 +78,7 @@
     gif: null,            // { width, height, frames:[{data,delayCs}] } when an animated GIF is loaded
     video: null,          // <video> element when a video is loaded
     videoUrl: null,       // object URL backing the video (revoked on replace)
+    camera: null,         // { el:<video>, stream:MediaStream, mirror:bool } when live
     exporting: false,     // true during seek-based exports; pauses the live loop
     batch: [],            // queued File objects for batch processing
     customColors: ['#1a1c2c', '#5d275d', '#b13e53', '#ef7d57', '#ffcd75', '#a7f070', '#38b764', '#257179'],
@@ -213,13 +214,21 @@
     wctx.clearRect(0, 0, w, h);
     wctx.fillStyle = '#ffffff';          // flatten transparency onto white
     wctx.fillRect(0, 0, w, h);
+    const mirror = !!(state.camera && drawable === state.camera.el && state.camera.mirror);
     if (cp) {
       const kx = w / cp.cw, ky = h / cp.ch;
       wctx.save();
       wctx.translate(w / 2 - cp.px * kx, h / 2 - cp.py * ky);
       wctx.scale(kx, ky);
       wctx.rotate(cp.theta);
+      if (mirror) wctx.scale(-1, 1);       // flip about the source centre
       wctx.drawImage(drawable, -sw / 2, -sh / 2, sw, sh);
+      wctx.restore();
+    } else if (mirror) {
+      wctx.save();
+      wctx.translate(w, 0);
+      wctx.scale(-1, 1);
+      wctx.drawImage(drawable, 0, 0, w, h);
       wctx.restore();
     } else {
       wctx.drawImage(drawable, 0, 0, w, h);
@@ -280,7 +289,8 @@
 
   function updateStatus(s, sw, sh, w, h) {
     $('status').hidden = false;
-    const extra = state.gif ? ` · <b>${state.gif.frames.length}</b> GIF frames`
+    const extra = state.camera ? ' · <b>LIVE</b> camera'
+      : state.gif ? ` · <b>${state.gif.frames.length}</b> GIF frames`
       : state.video ? ` · <b>${fmtTime(state.video.duration)}</b> clip` : '';
     $('status').innerHTML = `<b>${sw}×${sh}</b> source · dithered at <b>${w}×${h}</b> · ` +
       `export <b>${w * s.exportScale}×${h * s.exportScale}</b>${extra}`;
@@ -357,6 +367,7 @@
   let scrubbing = false;
 
   function cleanupVideo() {
+    if (state.camera) stopCamera(false);
     if (state.video) { try { state.video.pause(); } catch (e) {} }
     if (state.videoUrl) URL.revokeObjectURL(state.videoUrl);
     state.video = null; state.videoUrl = null;
@@ -426,6 +437,143 @@
     v.currentTime = t;
     await once(v, 'seeked', 3000);
     return Math.abs(v.currentTime - t) <= 0.5;
+  }
+
+  /* ---------- live camera ------------------------------------------------ */
+  let camRaf = 0;
+  let camRecorder = null;
+  let camRecTimer = 0;
+
+  function camMsg(text) { $('camMsg').textContent = text; }
+
+  function startCameraLoop() {
+    cancelAnimationFrame(camRaf);
+    const step = () => {
+      if (!state.camera || state.exporting) return;
+      render();
+      camRaf = requestAnimationFrame(step);
+    };
+    camRaf = requestAnimationFrame(step);
+  }
+
+  async function refreshCamDevices(currentId) {
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      const cams = devs.filter((d) => d.kind === 'videoinput');
+      const sel = $('camDevice');
+      sel.innerHTML = '';
+      cams.forEach((d, i) => {
+        const o = document.createElement('option');
+        o.value = d.deviceId;
+        o.textContent = d.label || 'Camera ' + (i + 1);
+        sel.appendChild(o);
+      });
+      if (currentId) sel.value = currentId;
+      $('camDeviceWrap').hidden = cams.length < 2;
+    } catch (err) { $('camDeviceWrap').hidden = true; }
+  }
+
+  async function startCamera(deviceId) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      camMsg('Camera API unavailable — needs a secure context (https or localhost).');
+      return;
+    }
+    $('camStartBtn').disabled = true;
+    camMsg('Requesting camera…');
+    try {
+      const constraints = {
+        audio: false,
+        video: deviceId
+          ? { deviceId: { exact: deviceId } }
+          : { width: { ideal: 1280 }, height: { ideal: 720 } },
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      cleanupVideo();                       // drops any loaded video AND a running camera
+      state.gif = null;
+      const el = document.createElement('video');
+      el.muted = true;
+      el.playsInline = true;
+      el.srcObject = stream;
+      await el.play();
+      if (!el.videoWidth) await once(el, 'loadedmetadata', 3000);
+      state.camera = { el, stream, mirror: $('camMirror').checked };
+      state.image = el;
+      onImageReady();
+      startCameraLoop();
+      camMsg(`Live — ${el.videoWidth}×${el.videoHeight}. Nothing leaves this device.`);
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        track.addEventListener('ended', () => stopCamera(true)); // unplugged / OS revoked
+        refreshCamDevices(track.getSettings && track.getSettings().deviceId);
+      }
+    } catch (err) {
+      camMsg(err && err.name === 'NotAllowedError'
+        ? 'Camera permission denied — allow it in the browser and try again.'
+        : 'Camera failed: ' + (err && err.message || err));
+    } finally {
+      $('camStartBtn').disabled = false;
+    }
+  }
+
+  // stop the stream; freeze=true keeps the last frame as the working image
+  function stopCamera(freeze) {
+    const cam = state.camera;
+    if (!cam) return;
+    if (camRecorder) { try { camRecorder.stop(); } catch (err) {} }
+    cancelAnimationFrame(camRaf);
+    let still = null;
+    if (freeze && cam.el.videoWidth) {
+      still = document.createElement('canvas');
+      still.width = cam.el.videoWidth;
+      still.height = cam.el.videoHeight;
+      const c2 = still.getContext('2d');
+      if (cam.mirror) { c2.translate(still.width, 0); c2.scale(-1, 1); } // bake the mirror in
+      c2.drawImage(cam.el, 0, 0);
+    }
+    cam.stream.getTracks().forEach((t) => t.stop());
+    state.camera = null;
+    if (still) {
+      state.image = still;
+      camMsg('Camera stopped — last frame kept as the working image.');
+      render();
+    } else if (state.image === cam.el) {
+      state.image = null;
+      $('viewport').hidden = true;
+      $('empty').hidden = false;
+    }
+    updateVisibility();
+    refreshGifInfo();
+  }
+
+  function toggleCamRecord() {
+    if (camRecorder) { try { camRecorder.stop(); } catch (err) {} return; }
+    if (!window.MediaRecorder) { camMsg('Recording needs MediaRecorder — not supported here.'); return; }
+    const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4']
+      .find((m) => MediaRecorder.isTypeSupported(m));
+    if (!mime) { camMsg('No supported recording format.'); return; }
+    const stream = canvas.captureStream(30);
+    camRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8e6 });
+    const chunks = [];
+    camRecorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    const t0 = Date.now();
+    const btn = $('camRecBtn');
+    camRecTimer = setInterval(() => {
+      btn.textContent = '■ Stop ' + fmtTime((Date.now() - t0) / 1000);
+    }, 500);
+    camRecorder.onstop = () => {
+      clearInterval(camRecTimer);
+      camRecorder = null;
+      btn.textContent = '● Record';
+      btn.classList.remove('rec');
+      const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+      const blob = new Blob(chunks, { type: mime.split(';')[0] });
+      downloadBlob(blob, `ditherer-cam-${Date.now()}.${ext}`);
+      camMsg(`Recorded ${fmtSize(blob.size)} ${ext.toUpperCase()}.`);
+    };
+    camRecorder.start(250);
+    btn.textContent = '■ Stop 0:00';
+    btn.classList.add('rec');
+    camMsg('Recording the live preview…');
   }
 
   /* ---------- video export ----------------------------------------------- */
@@ -787,6 +935,12 @@
     $('customWrap').hidden = !(s.mode === 'color' && s.palette === 'custom');
     $('shimmerFramesWrap').hidden = !!state.gif || !!state.video;
     $('videoPanel').hidden = !state.video;
+    const camOn = !!state.camera;
+    $('camStopBtn').hidden = !camOn;
+    $('camActionsWrap').hidden = !camOn;
+    $('camMirrorWrap').hidden = !camOn;
+    if (!camOn) $('camDeviceWrap').hidden = true;
+    $('camStartBtn').textContent = camOn ? 'Restart camera' : 'Start camera';
     $('mp4FpsWrap').hidden = $('videoFormat').value !== 'mp4';
     $('videoHint').textContent = $('videoFormat').value === 'mp4'
       ? 'Frame-accurate H.264 encode via WebCodecs — plays everywhere, but silent (no audio). ' +
@@ -801,7 +955,9 @@
 
   function refreshGifInfo() {
     const info = $('gifInfo');
-    if (state.video) {
+    if (state.camera) {
+      info.textContent = `Live camera — “Export animated GIF” grabs ${$('animFrames').value} consecutive live frames.`;
+    } else if (state.video) {
       info.textContent = `Video — “Export animated GIF” samples it at ${$('animFps').value} fps ` +
         `(up to ${MAX_GIF_FRAMES} frames). For full quality use the WebM export below.`;
     } else if (state.gif) {
@@ -1198,6 +1354,18 @@
       refreshPresetSelect();
       presetMsg(`Deleted “${name}”.`);
     });
+
+    // camera
+    $('camStartBtn').addEventListener('click', () => startCamera($('camDevice').value || undefined));
+    $('camStopBtn').addEventListener('click', () => stopCamera(true));
+    $('camMirror').addEventListener('change', () => {
+      if (state.camera) state.camera.mirror = $('camMirror').checked;
+    });
+    $('camDevice').addEventListener('change', () => {
+      if (state.camera) startCamera($('camDevice').value);
+    });
+    $('camSnapBtn').addEventListener('click', download);
+    $('camRecBtn').addEventListener('click', toggleCamRecord);
 
     // misc
     $('resetBtn').addEventListener('click', () => { applyDefaults(); schedule(); });

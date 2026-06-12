@@ -141,6 +141,7 @@ input[type="text"]::placeholder { color: var(--muted); }
 .row > input[type="text"] { flex: 1; min-width: 0; }
 .row > input[type="text"] + .btn { flex: 0 0 auto; }
 .hint-inline { color: var(--muted); font-weight: 400; font-size: 11px; }
+.btn.rec { border-color: var(--danger); color: var(--danger); }
 
 /* buttons */
 .btn {

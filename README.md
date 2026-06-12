@@ -31,6 +31,14 @@ and zoom-to-reframe: zoom past 1× and drag the preview to position the crop.
 A rule-of-thirds grid appears while you adjust. Applies to stills, GIFs and
 video alike — all exports included.
 
+**Live camera** — turn on your webcam and watch every effect apply in real
+time: algorithm, palette, adjustments, crop/straighten, post effects — all
+live. Pick a device if you have several, toggle the selfie mirror, save a
+snapshot PNG, or record the live dithered preview straight to WebM. Stopping
+the camera keeps the last frame as the working image so you can keep editing
+it. Camera access needs https or localhost, and nothing ever leaves your
+machine.
+
 **Settings presets** — save the entire control state (dither, color, custom
 palette, adjustments, crop/straighten, animation and export options) under a
 name and reapply it to any image later; saved presets persist in the browser.
